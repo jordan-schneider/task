@@ -20,6 +20,7 @@ class Span:
 
     start: datetime = field(default_factory=lambda: datetime.now(tz=tz.tzlocal()))
     stop: Optional[datetime] = None
+    message: Optional[str] = None
 
     def duration(self) -> timedelta:
         """ Computes the duration of time this span of work took."""
@@ -32,9 +33,12 @@ class Span:
         """ Returns true if the span is closed."""
         return self.stop is not None
 
-    def close(self, stop_time: Optional[datetime] = None) -> None:
+    def close(
+        self, stop_time: Optional[datetime] = None, message: Optional[str] = None
+    ) -> None:
         """ Closes the span by setting the stop time to the current time"""
         self.stop = datetime.now(tz=tz.tzlocal()) if stop_time is None else stop_time
+        self.message = message
 
 
 def round_to_seconds(duration: timedelta) -> timedelta:
@@ -71,7 +75,13 @@ class Task:
             out += str(round_to_seconds(self.total_duration())) + "\n"
 
         if self.tags is not None:
-            out += "Tags: " + ", ".join(self.tags)
+            out += "Tags: " + ", ".join(self.tags) + "\n"
+
+        if len(self.spans) > 0:
+            out += "Log:\n"
+            for span in self.spans:
+                if span.message is not None:
+                    out += span.message.strip() + "\n"
 
         return out
 
@@ -190,7 +200,12 @@ def start(
     write(tasks, active_task, taskdir)
 
 
-def stop(*, stop_time: Optional[str] = None, taskdir: Path = DEFAULT_TASKDIR) -> None:
+def stop(
+    *,
+    stop_time: Optional[str] = None,
+    message: Optional[str] = None,
+    taskdir: Path = DEFAULT_TASKDIR,
+) -> None:
     """ Stops the timer on the active task."""
     tasks, active_task = read_state(taskdir)
 
@@ -200,12 +215,21 @@ def stop(*, stop_time: Optional[str] = None, taskdir: Path = DEFAULT_TASKDIR) ->
     active_span = active_task.spans[-1]
 
     if stop_time is None:
-        active_span.close()
+        active_span.close(message=message)
     else:
-        active_span.close(parse_local(stop_time))
+        active_span.close(parse_local(stop_time), message=message)
     print(active_task)
 
     write(tasks, None, taskdir)
+
+
+def examine(name: str, *, taskdir: Path = DEFAULT_TASKDIR) -> None:
+    tasks, active_task = read_state(taskdir)
+
+    if not name in tasks.keys():
+        raise RuntimeError(f"Task {name} does not exist.")
+
+    print(tasks[name])
 
 
 def close(name: str, *, taskdir: Path = DEFAULT_TASKDIR) -> None:
@@ -311,4 +335,4 @@ def write(tasks: TaskDict, active_task: Optional[Task], taskdir: Path) -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level="INFO", format="")
-    argh.dispatch_commands([add, close, start, stop, status, calibrate])
+    argh.dispatch_commands([add, close, start, stop, status, calibrate, examine])
