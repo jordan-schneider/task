@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+import argh  # type: ignore
 import dateparser  # type: ignore
-import defopt  # type: ignore
 import matplotlib.pyplot as plt
+from argh import arg  # type: ignore
 from dateutil import tz
 from tabulate import tabulate
 
@@ -48,7 +49,7 @@ class Task:
     name: str
     due: Optional[datetime] = None
     estimate: Optional[timedelta] = None
-    tags: Tuple[str, ...] = ()
+    tags: Optional[List[str]] = None
     spans: List[Span] = field(default_factory=list)
     open: bool = True
 
@@ -144,12 +145,13 @@ def parse_local(raw: str) -> datetime:
     return dateparser.parse(raw).replace(tzinfo=tz.tzlocal())
 
 
+@arg("--tags", nargs="*")
 def add(
     *,
     name: str,
     due: Optional[str] = None,
     estimate: Optional[str] = None,
-    tags: Tuple[str, ...] = (),
+    tags: Optional[List[str]] = None,
     taskdir: Path = DEFAULT_TASKDIR,
 ) -> None:
     """ Adds a new task to the todo list."""
@@ -265,4 +267,4 @@ def write(tasks: TaskDict, active_task: Optional[Task], taskdir: Path) -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level="INFO", format="")
-    defopt.run([add, close, start, stop, status, calibrate])
+    argh.dispatch_commands([add, close, start, stop, status, calibrate])
