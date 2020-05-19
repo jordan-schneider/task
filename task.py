@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import argh  # type: ignore
 import dateparser  # type: ignore
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # type: ignore
 from argh import arg  # type: ignore
 from dateutil import tz
 from tabulate import tabulate
@@ -70,7 +70,7 @@ class Task:
         elif len(self.spans) > 0:
             out += str(round_to_seconds(self.total_duration())) + "\n"
 
-        if len(self.tags) > 0:
+        if self.tags is not None:
             out += "Tags: " + ", ".join(self.tags)
 
         return out
@@ -85,7 +85,7 @@ def format_tasks(tasks: Sequence[Task]):
                 task.due,
                 task.estimate,
                 task.total_duration(),
-                ", ".join(task.tags),
+                ", ".join(task.tags) if task.tags is not None else "",
             ]
             for task in tasks
         ],
@@ -147,8 +147,8 @@ def parse_local(raw: str) -> datetime:
 
 @arg("--tags", nargs="*")
 def add(
-    *,
     name: str,
+    *,
     due: Optional[str] = None,
     estimate: Optional[str] = None,
     tags: Optional[List[str]] = None,
@@ -173,7 +173,7 @@ def add(
 
 
 def start(
-    *, name: str, start_time: Optional[str] = None, taskdir: Path = DEFAULT_TASKDIR,
+    name: str, *, start_time: Optional[str] = None, taskdir: Path = DEFAULT_TASKDIR,
 ) -> None:
     """ Starts tracking the time for the named task."""
     tasks, active_task = read_state(taskdir)
@@ -205,12 +205,15 @@ def stop(*, stop_time: Optional[str] = None, taskdir: Path = DEFAULT_TASKDIR) ->
         active_span.close(parse_local(stop_time))
     print(active_task)
 
-    write(tasks, active_task, taskdir)
+    write(tasks, None, taskdir)
 
 
-def close(*, name: str, taskdir: Path = DEFAULT_TASKDIR) -> None:
+def close(name: str, *, taskdir: Path = DEFAULT_TASKDIR) -> None:
     """ Closes a task, removing it from the list of open tasks."""
     tasks, active_task = read_state(taskdir)
+
+    if not name in tasks.keys():
+        raise ValueError(f"Task {name} does not exist.")
 
     if (
         active_task is not None
@@ -221,7 +224,7 @@ def close(*, name: str, taskdir: Path = DEFAULT_TASKDIR) -> None:
         stop()
         active_task = None
 
-    print(f"Closing task {name}")
+    print(f"Closing task")
     task = tasks[name]
     task.open = False
     print(task)
@@ -229,31 +232,57 @@ def close(*, name: str, taskdir: Path = DEFAULT_TASKDIR) -> None:
     write(tasks, active_task, taskdir)
 
 
-def status(*, show_closed: bool = False, taskdir: Path = DEFAULT_TASKDIR):
+@arg("--tags", nargs="*")
+def status(
+    *,
+    show_closed: bool = False,
+    tags: Optional[List[str]] = None,
+    taskdir: Path = DEFAULT_TASKDIR,
+):
     """ Shows the currently active task, and all tasks in the list."""
     tasks, active_task = read_state(taskdir)
+
     print(f"Active task: {active_task}")
-    print()
-    if show_closed:
-        print("Tasks:")
-        print(format_tasks(list(tasks.values())))
-    else:
-        print("Open tasks:")
-        print(format_tasks([task for task in tasks.values() if task.open]))
+
+    relevant_tasks = list(tasks.values())
+    if tags is not None:
+        relevant_tasks = [
+            task
+            for task in relevant_tasks
+            if task.tags is not None and set(task.tags).intersection(tags)
+        ]
+    if not show_closed:
+        relevant_tasks = [task for task in relevant_tasks if task.open]
+
+    print("Tasks:")
+    print(format_tasks(relevant_tasks))
 
 
 def calibrate(*, taskdir: Path = DEFAULT_TASKDIR) -> None:
+    """ Produces a calibration plot for your estimated vs actual times."""
     tasks, _ = read_state(taskdir)
-    closed_tasks = [
-        task for task in tasks.values() if not task.open and task.estimate is not None
+    closed_tasks = [task for task in tasks.values() if not task.open]
+    expected = [
+        task.estimate.total_seconds()
+        for task in closed_tasks
+        if task.estimate is not None
     ]
-    expected = [task.estimate.total_seconds() for task in closed_tasks]
-    actual = [task.total_duration().total_seconds() for task in closed_tasks]
-    plt.plot(expected, actual)
-    plt.title("Expected vs actual task completion times")
-    plt.xlabel("Expected time")
-    plt.ylabel("Actual Time")
-    plt.show()
+    actual = [
+        task.total_duration().total_seconds()
+        for task in closed_tasks
+        if task.estimate is not None
+    ]
+    if len(expected) > 0:
+        plt.scatter(expected, actual)
+        low = min(min(expected), min(actual))
+        high = max(max(expected), max(actual))
+        plt.plot(
+            [low, high], [low, high], label="Perfect",
+        )
+        plt.title("Expected vs actual task completion times")
+        plt.xlabel("Expected time (s)")
+        plt.ylabel("Actual Time (s)")
+        plt.show()
 
 
 def write(tasks: TaskDict, active_task: Optional[Task], taskdir: Path) -> None:
