@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import argh  # type: ignore
 import dateparser  # type: ignore
 import matplotlib.pyplot as plt  # type: ignore
-from argh import arg  # type: ignore
+from argh.decorators import arg  # type: ignore
 from dateutil import tz
 from tabulate import tabulate
 
@@ -232,11 +232,19 @@ def close(name: str, *, taskdir: Path = DEFAULT_TASKDIR) -> None:
     write(tasks, active_task, taskdir)
 
 
+DUE = "due"
+ESTIMATE = "estimate"
+SORTS = [DUE, ESTIMATE]
+
+
 @arg("--tags", nargs="*")
+@arg("--sort", choices=SORTS)
 def status(
     *,
     show_closed: bool = False,
     tags: Optional[List[str]] = None,
+    sort: str = DUE,
+    sort_desc: bool = False,
     taskdir: Path = DEFAULT_TASKDIR,
 ):
     """ Shows the currently active task, and all tasks in the list."""
@@ -253,6 +261,13 @@ def status(
         ]
     if not show_closed:
         relevant_tasks = [task for task in relevant_tasks if task.open]
+
+    if sort == DUE:
+        key_fn = lambda task: ((task.due is None) != sort_desc, task.due)
+    elif sort == ESTIMATE:
+        key_fn = lambda task: ((task.estimate is None) != sort_desc, task.estimate)
+
+    relevant_tasks = sorted(relevant_tasks, key=key_fn, reverse=sort_desc)
 
     print("Tasks:")
     print(format_tasks(relevant_tasks))
