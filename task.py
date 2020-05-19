@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import dateparser  # type: ignore
 import defopt  # type: ignore
+import matplotlib.pyplot as plt
 from dateutil import tz
 from tabulate import tabulate
 
@@ -239,6 +240,20 @@ def status(*, show_closed: bool = False, taskdir: Path = DEFAULT_TASKDIR):
         print(format_tasks([task for task in tasks.values() if task.open]))
 
 
+def calibrate(*, taskdir: Path = DEFAULT_TASKDIR) -> None:
+    tasks, _ = read_state(taskdir)
+    closed_tasks = [
+        task for task in tasks.values() if not task.open and task.estimate is not None
+    ]
+    expected = [task.estimate.total_seconds() for task in closed_tasks]
+    actual = [task.total_duration().total_seconds() for task in closed_tasks]
+    plt.plot(expected, actual)
+    plt.title("Expected vs actual task completion times")
+    plt.xlabel("Expected time")
+    plt.ylabel("Actual Time")
+    plt.show()
+
+
 def write(tasks: TaskDict, active_task: Optional[Task], taskdir: Path) -> None:
     """ Write the todo task list and currently active task to the given task directory."""
     pickle.dump(tasks, open(taskdir / TASKS_FILENAME, "wb"))
@@ -250,4 +265,4 @@ def write(tasks: TaskDict, active_task: Optional[Task], taskdir: Path) -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level="INFO", format="")
-    defopt.run([add, close, start, stop, status])
+    defopt.run([add, close, start, stop, status, calibrate])
