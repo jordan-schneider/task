@@ -224,7 +224,7 @@ def close(name: str, *, taskdir: Path = DEFAULT_TASKDIR) -> None:
         stop()
         active_task = None
 
-    print(f"Closing task")
+    print("Closing task")
     task = tasks[name]
     task.open = False
     print(task)
