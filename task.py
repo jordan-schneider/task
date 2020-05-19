@@ -6,8 +6,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import dateparser
-import defopt
+import dateparser  # type: ignore
+import defopt  # type: ignore
 from dateutil import tz
 from tabulate import tabulate
 
@@ -21,12 +21,13 @@ class Span:
 
     def duration(self) -> timedelta:
         """ Computes the duration of time this span of work took."""
-        if not self.closed():
+        if self.stop is None:
             return datetime.now(tz=tz.tzlocal()) - self.start
         else:
             return self.stop - self.start
 
     def closed(self):
+        """ Returns true if the span is closed."""
         return self.stop is not None
 
     def close(self, stop_time: Optional[datetime] = None) -> None:
@@ -34,8 +35,9 @@ class Span:
         self.stop = datetime.now(tz=tz.tzlocal()) if stop_time is None else stop_time
 
 
-def round_to_seconds(td: timedelta) -> timedelta:
-    return td - timedelta(microseconds=td.microseconds)
+def round_to_seconds(duration: timedelta) -> timedelta:
+    """ Rounds a timedelta to the nearest second."""
+    return duration - timedelta(microseconds=duration.microseconds)
 
 
 @dataclass
@@ -49,9 +51,8 @@ class Task:
     spans: List[Span] = field(default_factory=list)
     open: bool = True
 
-    # TODO(joschnie): Write a __str__ method
-
     def total_duration(self) -> timedelta:
+        """ Returns the total duration of all spans in the task."""
         return sum([span.duration() for span in self.spans], timedelta())
 
     def __repr__(self):
@@ -60,7 +61,10 @@ class Task:
             out += f"Due: {self.due}\n"
 
         if self.estimate:
-            out += f"{round_to_seconds(self.total_duration())} / {round_to_seconds(self.estimate)}\n"
+            out += (
+                f"{round_to_seconds(self.total_duration())} / "
+                f"{round_to_seconds(self.estimate)}\n"
+            )
         elif len(self.spans) > 0:
             out += str(round_to_seconds(self.total_duration())) + "\n"
 
@@ -71,6 +75,7 @@ class Task:
 
 
 def format_tasks(tasks: Sequence[Task]):
+    """ Formats a sequence of tasks into a table."""
     return tabulate(
         [
             [
@@ -222,6 +227,7 @@ def close(*, name: str, taskdir: Path = DEFAULT_TASKDIR) -> None:
 
 
 def status(*, show_closed: bool = False, taskdir: Path = DEFAULT_TASKDIR):
+    """ Shows the currently active task, and all tasks in the list."""
     tasks, active_task = read_state(taskdir)
     print(f"Active task: {active_task}")
     print()
