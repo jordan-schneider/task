@@ -1,14 +1,15 @@
 """ Rich featured task tracker. """
-import argparse
 import logging
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import dateparser
+import defopt
 from dateutil import tz
+from tabulate import tabulate
 
 
 @dataclass
@@ -20,16 +21,21 @@ class Span:
 
     def duration(self) -> timedelta:
         """ Computes the duration of time this span of work took."""
-        # inlining this function so mypy can infer that self.stop isn't None
-        if self.stop is None or self.start is None:
-            raise RuntimeError(
-                "Both start and stop times must be defined for duration to be defined."
-            )
-        return self.stop - self.start
+        if not self.closed():
+            return datetime.now(tz=tz.tzlocal()) - self.start
+        else:
+            return self.stop - self.start
+
+    def closed(self):
+        return self.stop is not None
 
     def close(self, stop_time: Optional[datetime] = None) -> None:
         """ Closes the span by setting the stop time to the current time"""
         self.stop = datetime.now(tz=tz.tzlocal()) if stop_time is None else stop_time
+
+
+def round_to_seconds(td: timedelta) -> timedelta:
+    return td - timedelta(microseconds=td.microseconds)
 
 
 @dataclass
@@ -39,94 +45,62 @@ class Task:
     name: str
     due: Optional[datetime] = None
     estimate: Optional[timedelta] = None
-    tags: Optional[List[str]] = None
+    tags: Tuple[str, ...] = ()
     spans: List[Span] = field(default_factory=list)
     open: bool = True
 
+    # TODO(joschnie): Write a __str__ method
+
+    def total_duration(self) -> timedelta:
+        return sum([span.duration() for span in self.spans], timedelta())
+
+    def __repr__(self):
+        out = self.name + "\n"
+        if self.due:
+            out += f"Due: {self.due}\n"
+
+        if self.estimate:
+            out += f"{round_to_seconds(self.total_duration())} / {round_to_seconds(self.estimate)}\n"
+        elif len(self.spans) > 0:
+            out += str(round_to_seconds(self.total_duration())) + "\n"
+
+        if len(self.tags) > 0:
+            out += "Tags: " + ", ".join(self.tags)
+
+        return out
+
+
+def format_tasks(tasks: Sequence[Task]):
+    return tabulate(
+        [
+            [
+                task.name,
+                task.due,
+                task.estimate,
+                task.total_duration(),
+                ", ".join(task.tags),
+            ]
+            for task in tasks
+        ],
+        headers=["Name", "Due Date", "Estimate", "Duration", "Tags"],
+    )
+
 
 TaskDict = Dict[str, Task]
-
-ADD = "add"
-START = "start"
-STOP = "stop"
-CLOSE = "close"
-QUEUE = "queue"
-COMMANDS = [ADD, START, STOP, QUEUE]
 
 BASE_TIME = datetime(2020, 1, 1)
 
 TASKS_FILENAME = "tasks"
 ACTIVE_TASK_FILENAME = "active_task"
+DEFAULT_TASKDIR = Path.home() / ".tasks"
 
 
-def get_args():
-    """ Parses and returns command line arguments."""
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "command",
-        type=str,
-        choices=COMMANDS,
-        required=True,
-        help="Available commands.",
-    )
-
-    # TODO(joschnei): Print usage statement for different commands instead of all at once.
-    # Add --help.
-    add_group = parser.add_argument_group("Add task")
-    add_group.add_argument(
-        "name", type=str, required=True, help="Name of task to modify."
-    )
-    add_group.add_argument(
-        "--due", type=str, default=None, help="Due date of the task."
-    )
-    add_group.add_argument_group(
-        "-e",
-        "--estimate",
-        type=str,
-        default=None,
-        help="How long you expect the task to take.",
-    )
-    add_group.add_argument("tags", nargs="*", help="Additional tags to attach to task.")
-
-    start_group = parser.add_argument_group("Start task timer")
-    start_group.add_argument(
-        "name", type=str, required=True, help="Name of task to start."
-    )
-    start_group.add_argument(
-        "-t",
-        "--start-time",
-        type=str,
-        default=None,
-        help="Time to start at, instead of current time.",
-    )
-
-    stop_group.add_argument_group("Stop task")
-    stop_group.add_argument(
-        "-t",
-        "--stop-time",
-        type=str,
-        default=None,
-        help="Time to stop at, instead of current time.",
-    )
-
-    close_group = parser.add_argument_group("Close task")
-    close_group.add_argument(
-        "name", type=str, required=True, help="Name of task to close."
-    )
-
-    # TODO(joschnei): Check if $HOME is unix specific.
-    parser.add_argument("--taskdir", type=str, default="$HOME/.task/")
-
-    return parser.parse_args()
-
-
-def read_state(taskdir: str) -> Tuple[Path, TaskDict, Optional[Task]]:
+def read_state(taskdir: Path) -> Tuple[TaskDict, Optional[Task]]:
     """ Reads the state located in the task directory provided, if it exists."""
     dirpath = Path(taskdir)
 
     if not dirpath.exists():
-        logging.info(f"Task directory not found. Creating directory at {taskdir}")
+        print(f"Task directory not found. Creating directory at {taskdir}")
         dirpath.mkdir(parents=True, exist_ok=False)
 
     task_path = dirpath / TASKS_FILENAME
@@ -136,7 +110,7 @@ def read_state(taskdir: str) -> Tuple[Path, TaskDict, Optional[Task]]:
     name = open(active_task_path, "r").readline() if active_task_path.exists() else None
     active_task = tasks[name] if name is not None and name in tasks.keys() else None
 
-    return dirpath, tasks, active_task
+    return tasks, active_task
 
 
 def parse_duration(duration: str) -> timedelta:
@@ -165,53 +139,53 @@ def parse_local(raw: str) -> datetime:
 
 
 def add(
-    tasks: TaskDict,
+    *,
     name: str,
-    due_input: Optional[str] = None,
-    estimate_input: Optional[str] = None,
-    tags: List[str] = list(),
-) -> TaskDict:
+    due: Optional[str] = None,
+    estimate: Optional[str] = None,
+    tags: Tuple[str, ...] = (),
+    taskdir: Path = DEFAULT_TASKDIR,
+) -> None:
     """ Adds a new task to the todo list."""
-    if name is None:
-        # TODO(joschnei): Instead of printing specific error messages, print a usage statement
-        # here.
-        raise ValueError("You must specify a name of the task to add.")
+    tasks, active_task = read_state(taskdir)
+
     if name in tasks.keys():
         raise ValueError(f"Task with name {name} already exists.")
 
-    due = parse_local(due_input) if due_input is not None else None
-    estimate = parse_duration(estimate_input) if estimate_input is not None else None
-
-    task = Task(name=name, due=due, estimate=estimate, tags=tags,)
+    task = Task(
+        name=name,
+        due=parse_local(due) if due is not None else None,
+        estimate=parse_duration(estimate) if estimate is not None else None,
+        tags=tags,
+    )
 
     tasks[task.name] = task
-    return tasks
+
+    write(tasks, active_task, taskdir)
 
 
 def start(
-    tasks: TaskDict,
-    name: str,
-    active_task: Optional[Task],
-    start_time: Optional[str] = None,
-) -> Tuple[TaskDict, Task]:
+    *, name: str, start_time: Optional[str] = None, taskdir: Path = DEFAULT_TASKDIR,
+) -> None:
     """ Starts tracking the time for the named task."""
-    if name is None:
-        raise ValueError("You must specify a name of the task to add.")
+    tasks, active_task = read_state(taskdir)
 
     if active_task is not None:
         active_task.spans[-1].close()
-        logging.info(f"Closed active task {active_task}")
+        print(f"Closed active task {active_task}")
 
     span = Span() if start_time is None else Span(start=parse_local(start_time))
 
     active_task = tasks[name]
     active_task.spans.append(span)
 
-    return tasks, active_task
+    write(tasks, active_task, taskdir)
 
 
-def stop(active_task: Optional[Task], stop_time: Optional[str] = None) -> None:
+def stop(*, stop_time: Optional[str] = None, taskdir: Path = DEFAULT_TASKDIR) -> None:
     """ Stops the timer on the active task."""
+    tasks, active_task = read_state(taskdir)
+
     if active_task is None:
         raise ValueError("No active task to stop.")
 
@@ -221,54 +195,42 @@ def stop(active_task: Optional[Task], stop_time: Optional[str] = None) -> None:
         active_span.close()
     else:
         active_span.close(parse_local(stop_time))
+    print(active_task)
 
-    # Intentionally returning None, as the active_task is None after stopping the active task.
-    return None
+    write(tasks, active_task, taskdir)
 
 
-def close(
-    tasks: TaskDict, active_task: Optional[Task], name: str
-) -> Tuple[TaskDict, Optional[Task]]:
+def close(*, name: str, taskdir: Path = DEFAULT_TASKDIR) -> None:
     """ Closes a task, removing it from the list of open tasks."""
+    tasks, active_task = read_state(taskdir)
+
     if (
         active_task is not None
         and name == active_task.name
         and active_task.spans[-1].stop is None
     ):
-        logging.info(f"Stopping active timer on task {name}")
-        active_task = stop(active_task)
+        print(f"Stopping active timer on task {name}")
+        stop()
+        active_task = None
 
+    print(f"Closing task {name}")
     task = tasks[name]
     task.open = False
-
-    return tasks, active_task
-
-
-def process_command(
-    args, tasks: TaskDict, active_task: Optional[Task], taskdir: Path
-) -> None:
-    """ Identifies the requested command and executes it, saving the results to disk."""
-    if args.command == ADD:
-        tasks = add(
-            tasks=tasks,
-            name=args.name,
-            due_input=args.due,
-            estimate_input=args.estimate,
-            tags=args.tags,
-        )
-    elif args.command == START:
-        tasks, active_task = start(
-            tasks=tasks,
-            name=args.name,
-            active_task=active_task,
-            start_time=args.start_time,
-        )
-    elif args.command == STOP:
-        active_task = stop(active_task=active_task, stop_time=args.stop_time)
-    elif args.command == CLOSE:
-        tasks, active_task = close(tasks=tasks, active_task=active_task, name=args.name)
+    print(task)
 
     write(tasks, active_task, taskdir)
+
+
+def status(*, show_closed: bool = False, taskdir: Path = DEFAULT_TASKDIR):
+    tasks, active_task = read_state(taskdir)
+    print(f"Active task: {active_task}")
+    print()
+    if show_closed:
+        print("Tasks:")
+        print(format_tasks(list(tasks.values())))
+    else:
+        print("Open tasks:")
+        print(format_tasks([task for task in tasks.values() if task.open]))
 
 
 def write(tasks: TaskDict, active_task: Optional[Task], taskdir: Path) -> None:
@@ -280,13 +242,6 @@ def write(tasks: TaskDict, active_task: Optional[Task], taskdir: Path) -> None:
     active_task_file.close()
 
 
-def main():
-    args = get_args()
-
-    taskdir, tasks, active_task = read_state(args.taskdir)
-
-    process_command(args, tasks, active_task, taskdir)
-
-
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level="INFO", format="")
+    defopt.run([add, close, start, stop, status])
