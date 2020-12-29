@@ -224,6 +224,7 @@ def stop(
 
 
 def examine(name: str, *, taskdir: Path = DEFAULT_TASKDIR) -> None:
+    """ Shows the details of a specific task. """
     tasks, active_task = read_state(taskdir)
 
     if not name in tasks.keys():

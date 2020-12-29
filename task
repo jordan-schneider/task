@@ -1,2 +1,2 @@
 #!/bin/bash
-python task.py "$@"
+python3 /home/joschnei/task/task.py "$@"
